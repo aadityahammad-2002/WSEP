@@ -1,7 +1,10 @@
 import type { Comparison, Intelligence, Monthly, Revision, Status, PredictionDetails, PredictionItem } from './types';
 
+// Empty locally: Vite proxies /api to :8000. On Vercel use the public API host.
+const API_ORIGIN = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+
 async function fetchJSON<T>(route: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`/api/${route}`, { ...options, headers: { Accept: 'application/json', ...options?.headers } });
+  const response = await fetch(`${API_ORIGIN}/api/${route}`, { ...options, headers: { Accept: 'application/json', ...options?.headers } });
   if (!response.ok) {
     let message = `${response.status}: ${response.statusText}`;
     try { const error = await response.json(); message = typeof error.detail === 'string' ? error.detail : message; } catch { /* Non-JSON gateway errors are rendered as status text. */ }
@@ -15,7 +18,7 @@ export const getComparison = (date: string, time: string) => fetchJSON<Compariso
 export const getMonthly = (time: string, day = "2026-01-15") => fetchJSON<Monthly>(`analysis/recent?day=${day}&hour=${time.slice(0,2)}&minute=${time.slice(3)}`);
 export const getRevisions = (date: string, time: string, start: string) => fetchJSON<{ versions: Revision[] }>(`analysis/versions?day=${date}&hour=${time.slice(0,2)}&minute=${time.slice(3)}&start=${encodeURIComponent(start)}`);
 export const startSync = () => fetchJSON<Status>('sync', { method: 'POST' });
-export const exportUrl = (date: string, time: string) => `/api/analysis/export.csv?day=${date}&hour=${time.slice(0,2)}&minute=${time.slice(3)}`;
+export const exportUrl = (date: string, time: string) => `${API_ORIGIN}/api/analysis/export.csv?day=${date}&hour=${time.slice(0,2)}&minute=${time.slice(3)}`;
 
 export const getIntelligence = (date: string, time: string) => fetchJSON<Intelligence>(`analysis/intelligence?day=${date}&hour=${time.slice(0,2)}&minute=${time.slice(3)}`);
 

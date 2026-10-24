@@ -14,7 +14,7 @@ from .domain import LONDON, UTC, parse_actuals, timestamp
 
 class PredictionStore:
     def __init__(self, root: Path | str | None = None):
-        self.root = Path(root) if root is not None else Path(__file__).resolve().parents[1] / 'data' / 'predictions'
+        self.root = Path(root) if root is not None else Path(os.getenv('WINDSIGHT_DATA_DIR', str(Path(__file__).resolve().parents[1] / 'data'))) / 'predictions'
 
     def save(self, report: dict, issued: datetime) -> dict:
         if issued.tzinfo is None:

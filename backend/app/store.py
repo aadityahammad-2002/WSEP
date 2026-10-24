@@ -7,7 +7,7 @@ from functools import lru_cache
 from datetime import date
 from pathlib import Path
 
-DEFAULT_ROOT = Path(__file__).resolve().parents[1] / "data" / "raw"
+DEFAULT_ROOT = Path(os.getenv("WINDSIGHT_DATA_DIR", str(Path(__file__).resolve().parents[1] / "data"))) / "raw"
 
 
 @lru_cache(maxsize=192)
