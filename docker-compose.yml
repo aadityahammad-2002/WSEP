@@ -1,0 +1,12 @@
+services:
+  windsight:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+    volumes:
+      - ./backend/data/raw:/app/backend/data/raw
+    restart: unless-stopped
