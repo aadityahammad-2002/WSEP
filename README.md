@@ -6,7 +6,7 @@ A full-stack web application for analysing UK day-ahead wind generation forecast
 ## 🚀 Live Application
 
 - **Live Website (Vercel):** https://frontend-aaditya-dev.vercel.app/
-- **Backend API (Render):** https://wsep-ayf9.onrender.com/api/health
+- **Live Website (Render):** https://wsep-ayf9.onrender.com/
 - **GitHub Repository:** https://github.com/aadityahammad-2002/WSEP
 
 ## 📌 Overview
