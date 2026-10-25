@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from datetime import date, timedelta, datetime, timezone
+from calendar import monthrange
 
 from .domain import FIRST_DECISION, LAST_DECISION, LONDON, evaluate_day, metrics, parse_actuals, parse_forecasts, timestamp, versions_for, decision_instant
 from .intelligence import analyse, backtest
@@ -61,6 +62,22 @@ class WindService:
             "available": d["available"], **d["metrics"],
         } for d in days]
         return {"metrics": summary, "daily": daily, "complete": len(present) == 31}
+
+    def calendar_month(self, selected: date, hour: int = 9, minute: int = 50) -> dict:
+        """Aggregate each decision date in the selected calendar month (not just 14 days)."""
+        days = [self.day(date(selected.year, selected.month, n), hour, minute, allow_any_day=True)
+                for n in range(1, monthrange(selected.year, selected.month)[1] + 1)]
+        present = [item for item in days if item['available']]
+        observations = [point for item in present for point in item['points']]
+        expected = sum(item['metrics']['expected'] for item in present)
+        summary = metrics(observations, expected)
+        summary.update({
+            'available_days': len(present), 'total_days': len(days),
+            'missing_days': [item['decision_date'] for item in days if not item['available']],
+        })
+        daily = [{'decision_date': item['decision_date'], 'delivery_date': item['delivery_date'],
+                  'available': item['available'], **item['metrics']} for item in days]
+        return {'metrics': summary, 'daily': daily, 'complete': len(present) == len(days)}
 
     def intelligence(self, day: date, hour: int = 9, minute: int = 50) -> dict:
         target = self.day(day, hour, minute)

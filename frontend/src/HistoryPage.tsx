@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CalendarRange, ChevronDown, ChevronLeft, ChevronRight, Database, Download, RefreshCw, ShieldCheck } from 'lucide-react';
 import { CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { getHistory, getStatus, importHistory } from './api';
+import { clearDataCache, getHistory, importHistory, getStatus } from './api';
 import { CHART_COLORS, formatMwTick, formatUkAxisTick, formatUkDateTime, tooltipBoxStyle } from './chartTheme';
 import type { HistoryDay, HistoryInterval, HistoryResult, Status } from './types';
 
@@ -39,9 +39,9 @@ function DailyReport({day}:{day:HistoryDay}) {
   </article>;
 }
 export default function HistoryPage(){
-  const [draftStart,setDraftStart]=useState(dateForInput(-7));
-  const [draftEnd,setDraftEnd]=useState(dateForInput(-1));
-  const [range,setRange]=useState(()=>({start:dateForInput(-7),end:dateForInput(-1)}));
+  const [draftStart,setDraftStart]=useState('2026-01-01');
+  const [draftEnd,setDraftEnd]=useState('2026-01-31');
+  const [range,setRange]=useState(()=>({start:'2026-01-01',end:'2026-01-31'}));
   const [time,setTime]=useState('09:50');
   const [page,setPage]=useState(1);
   const [report,setReport]=useState<HistoryResult|null>(null);
@@ -58,7 +58,7 @@ export default function HistoryPage(){
     finally{if(request===generation.current)setLoading(false);}
   },[range,page,time]);
   useEffect(()=>{void load();},[load]);
-  useEffect(()=>{if(!status?.syncing)return;const interval=window.setInterval(async()=>{try{const st=await getStatus();setStatus(st);if(!st.syncing){setImporting(false);setNotice(st.errors.length?`${st.errors.length} Elexon downloads failed; inspect the status and retry.`:'Download completed. Refreshing this history page.');void load();}}catch{/* Show API errors via the explicit refresh. */}},2500);return()=>clearInterval(interval);},[status?.syncing,load]);
+  useEffect(()=>{if(!status?.syncing)return;const interval=window.setInterval(async()=>{try{const st=await getStatus();setStatus(st);if(!st.syncing){clearDataCache('history');setImporting(false);setNotice(st.errors.length?`${st.errors.length} Elexon downloads failed; inspect the status and retry.`:'Download completed. Refreshing this history page.');void load();}}catch{/* Show API errors via the explicit refresh. */}},2500);return()=>clearInterval(interval);},[status?.syncing,load]);
   function apply(){if(draftStart>draftEnd){setError('Start date must not be after end date.');return;}if(draftEnd>dateForInput(0)){setError('Future decision dates are not historical records.');return;}const span=(new Date(draftEnd).getTime()-new Date(draftStart).getTime())/86400000;if(span>365){setError('Select up to 366 days; use adjacent ranges for longer history.');return;}setError('');setNotice('');setPage(1);setRange({start:draftStart,end:draftEnd});}
   async function importPage(){const rows=report?.days??[];if(!rows.length)return;const from=rows[rows.length-1].decision_date;const to=rows[0].decision_date;setImporting(true);setError('');try{const st=await importHistory(from,to);setStatus(st);setNotice(st.started?`Fetching ${from} to ${to} and prior calibration history.`:'Another import is already active.');if(!st.started)setImporting(false);}catch(e){setError(e instanceof Error?e.message:'Could not fetch data');setImporting(false);}}
   const days=report?.days??[];

@@ -10,7 +10,7 @@ import {
 } from 'recharts';
 import ForecastWorkspace from './ForecastWorkspace';
 import HistoryPage from './HistoryPage';
-import { exportUrl, getComparison, getIntelligence, getMonthly, getRevisions, getStatus, prepareForecast } from './api';
+import { clearDataCache, exportUrl, getComparison, getIntelligence, getMonthly, getRevisions, getStatus, prepareForecast } from './api';
 import { CHART_COLORS, formatMwTick, formatUkAxisTick, formatUkDateTime, formatUkTime, getDailyErrorColor, tooltipBoxStyle } from './chartTheme';
 import type { Comparison, ForecastProfilePoint, Intelligence, IntelligencePoint, Monthly, Revision, Status } from './types';
 
@@ -93,7 +93,7 @@ function EmptyChart() { return <div className="empty-chart"><div className="empt
 
 function ErrorChart({ monthly }: { monthly: Monthly | null }) {
   const data = (monthly?.daily ?? []).map(d => ({ day: d.decision_date.slice(5), mae: d.mae_mw, available: d.available }));
-  return <div className="panel error-panel"><div className="panel-head"><div><div className="section-kicker">HISTORICAL PERFORMANCE</div><h2>Daily forecast error</h2><p>Mean absolute error · MW</p><div className="chart-context">Green = lower error, amber = moderate error, red = higher error.</div></div><span className="pill">Recent 14 decisions</span></div>
+  return <div className="panel error-panel"><div className="panel-head"><div><div className="section-kicker">HISTORICAL PERFORMANCE</div><h2>Daily forecast error</h2><p>Mean absolute error · MW</p><div className="chart-context">Green = lower error, amber = moderate error, red = higher error.</div></div><span className="pill">{(monthly?.metrics.total_days ?? 0)} decisions · selected month</span></div>
     <div className="bar-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={data} margin={{ top: 8, right: 4, left: -20, bottom: 0 }} barCategoryGap="31%"><CartesianGrid vertical={false} stroke="#eef1f0" strokeDasharray="4 5"/><XAxis dataKey="day" tick={{ fontSize: 10, fill: CHART_COLORS.axis }} tickLine={false} axisLine={false} interval={4}/><YAxis tick={{ fontSize: 10, fill: CHART_COLORS.axis }} tickLine={false} axisLine={false} tickFormatter={formatMwTick}/><Tooltip content={({active,payload}) => active && payload?.length ? <div className="viz-tip"><strong>{payload[0]?.payload.day}</strong><div>MAE <b>{fmt(payload[0]?.payload.mae)} MW</b></div></div> : null} contentStyle={tooltipBoxStyle}/><Bar dataKey="mae" radius={[4,4,0,0]} maxBarSize={13}>{data.map((d,i) => <Cell key={i} fill={getDailyErrorColor(d.mae)}/>)}</Bar></BarChart></ResponsiveContainer></div>
     <div className="side-note"><Info size={15}/> Days without source data are not assigned artificial errors.</div>
   </div>;
@@ -188,7 +188,8 @@ function RevisionDrawer({ point, date, time, onClose }: { point: ForecastProfile
 export default function App() {
   const [tab, setTab] = useState<Tab>('replay');
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [date, setDate] = useState(ukYesterday);
+  const [historyVisited, setHistoryVisited] = useState(false);
+  const [date, setDate] = useState('2026-01-15');
   const [time, setTime] = useState('09:50');
   const [status, setStatus] = useState<Status | null>(null);
   const [day, setDay] = useState<Comparison | null>(null);
@@ -199,23 +200,39 @@ export default function App() {
   const [selectedPoint, setSelectedPoint] = useState<ForecastProfilePoint | null>(null);
   const [syncRequest, setSyncRequest] = useState(false);
   const activeRequest = useRef(0);
+  useEffect(() => { if(tab === 'history') setHistoryVisited(true); }, [tab]);
+  const onForecastImported = useCallback(() => { clearDataCache('main'); }, []);
 
   const refresh = useCallback(async () => {
     const request = ++activeRequest.current;
-    const [statusResult, dayResult, monthResult, intelligenceResult] = await Promise.allSettled([getStatus(), getComparison(date,time), getMonthly(time,date), getIntelligence(date,time)]);
+    // Only fetch data used by the active analytics tab, never for hidden pages.
+    const needsDay = tab === 'overview' || tab === 'records';
+    const needsIntelligence = tab === 'overview' || tab === 'intelligence' || tab === 'records';
+    if (!needsDay && !needsIntelligence) return;
+    setLoading(true);
+    const [statusResult, dayResult, monthResult, intelligenceResult] = await Promise.allSettled([
+      getStatus(),
+      needsDay ? getComparison(date,time) : Promise.resolve(null),
+      tab === 'overview' ? getMonthly(time,date) : Promise.resolve(null),
+      needsIntelligence ? getIntelligence(date,time) : Promise.resolve(null)
+    ]);
     if (request !== activeRequest.current) return;
     if (statusResult.status === 'fulfilled') { setStatus(statusResult.value); setStatusError(''); }
     else setStatusError(statusResult.reason instanceof Error ? statusResult.reason.message : 'Could not connect to the API');
-    if(dayResult.status === 'fulfilled') setDay(dayResult.value);
-    else setDay(null);
-    if(monthResult.status === 'fulfilled') setMonthly(monthResult.value);
-    else setMonthly(null);
-    setIntelligence(intelligenceResult.status === 'fulfilled' ? intelligenceResult.value : null);
+    if(needsDay) setDay(dayResult.status === 'fulfilled' ? dayResult.value : null);
+    if(tab === 'overview') setMonthly(monthResult.status === 'fulfilled' ? monthResult.value : null);
+    if(needsIntelligence) setIntelligence(intelligenceResult.status === 'fulfilled' ? intelligenceResult.value : null);
     setLoading(false);
-  }, [date, time]);
+  }, [date, time, tab]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
-  useEffect(() => { if(!status?.syncing) return; const id = window.setInterval(() => void refresh(), 2800); return () => window.clearInterval(id); }, [status?.syncing, refresh]);
+  useEffect(() => { if(tab === 'overview' || tab === 'intelligence' || tab === 'records') void refresh(); }, [refresh,tab]);
+  useEffect(() => { if(!status?.syncing || (tab !== 'overview' && tab !== 'intelligence' && tab !== 'records')) return;
+    const id = window.setInterval(() => void getStatus().then(s=>{
+      setStatus(s);
+      if(!s.syncing) { clearDataCache('main'); void refresh(); }
+    }).catch(()=>{}), 3500);
+    return () => window.clearInterval(id);
+  }, [status?.syncing, tab, refresh]);
   async function requestSync() { setSyncRequest(true); try { await prepareForecast(date); await refresh(); } catch (e) { setStatusError(e instanceof Error ? e.message : 'Sync could not be started'); } finally { setSyncRequest(false); } }
   const report = day?.metrics;
 
@@ -226,8 +243,12 @@ export default function App() {
       {(tab !== 'replay' && tab !== 'live' && tab !== 'history') && statusError && <div className="notice danger-notice"><CircleAlert size={18}/><span>API connection issue: {statusError}</span><button onClick={() => void refresh()}>Retry</button></div>}
       {(tab === 'overview') && !day?.forecast_profile.length && <div className="notice data-notice"><span className="notice-icon"><Database size={19}/></span><div><strong>{status?.syncing ? 'Importing verified Elexon observations' : (status?.available_days ?? 0) > 0 ? 'Dataset import is partially complete' : 'Historical Elexon data not loaded yet'}</strong><span>{status?.syncing ? `Processing ${status.sync_done} of ${status.sync_total} source-day requests. Only verified records are displayed.` : `Selected day ${date} is not loaded. Use Fetch selected date to download WINDFOR, FUELHH and earlier calibration history.`}</span>{status?.syncing && <div className="notice-progress"><div style={{width:`${status.sync_total ? 100 * status.sync_done / status.sync_total : 0}%`}}/></div>}</div><button className="notice-action" onClick={() => void requestSync()} disabled={syncRequest || !!status?.syncing}>{status?.syncing ? 'Working' : 'Load data'}<ArrowRight size={16}/></button></div>}
       {(tab === 'overview') && !!status?.errors.length && !status.syncing && <div className="notice danger-notice"><CircleAlert size={18}/><span>{status.errors.length} source requests failed. First issue: {status.errors[0]}</span><button onClick={() => void requestSync()}>Retry</button></div>}
-      {tab !== 'methodology' && tab !== 'replay' && tab !== 'live' && tab !== 'history' && <div className="filter-row"><div className="filter-text"><Clock3 size={17}/><strong>Decision context</strong><span>Reconstructing what was known before purchase</span></div><div className="filter-controls"><label>Decision date <input type="date" min="2020-01-01" max={ukYesterday()} value={date} onChange={e => setDate(e.target.value)} aria-label="Decision date" /></label><label>As-of time <span className="select-wrap"><select value={time} onChange={e => setTime(e.target.value)} aria-label="Decision cutoff">{TIME_OPTIONS.map(t => <option value={t} key={t}>{t} UK</option>)}</select><ChevronDown size={14}/></span></label></div></div>}
-      {tab === 'replay' || tab === 'live' ? <ForecastWorkspace mode={tab}/> : tab === 'history' ? <HistoryPage/> : tab === 'methodology' ? <Methodology/> : tab === 'intelligence' ? <IntelligencePanel report={intelligence} loading={loading}/> : <>
+      {tab !== 'methodology' && tab !== 'replay' && tab !== 'live' && tab !== 'history' && <div className="filter-row"><div className="filter-text"><Clock3 size={17}/><strong>Decision context</strong><span>Shared with Historical Replay — change date and cutoff there</span></div><div className="filter-controls"><label>Decision date <input type="date" value={date} readOnly aria-label="Shared decision date" title="Change the shared date in Historical Replay" /></label><label>As-of time <span className="select-wrap"><select value={time} disabled aria-label="Shared decision cutoff">{TIME_OPTIONS.map(t => <option value={t} key={t}>{t} UK</option>)}</select><ChevronDown size={14}/></span></label></div></div>}
+      {historyVisited && <div style={{display:tab === 'history' ? 'block' : 'none'}}><HistoryPage/></div>}
+      <div style={{display:tab === 'replay' ? 'block' : 'none'}}>
+        <ForecastWorkspace mode="replay" date={date} decisionTime={time} onDateChange={setDate} onDecisionTimeChange={setTime} onDataImported={onForecastImported}/>
+      </div>
+      {tab === 'live' ? <ForecastWorkspace mode="live" date={date} decisionTime={time} onDateChange={setDate} onDecisionTimeChange={setTime} onDataImported={onForecastImported}/> : tab === 'replay' || tab === 'history' ? null : tab === 'methodology' ? <Methodology/> : tab === 'intelligence' ? <IntelligencePanel report={intelligence} loading={loading}/> : <>
         {tab === 'overview' && <><div className="h-stats ws-overview-signals"><div><small>Engine forecast · mean</small><strong>{fmt(intelligence?.profile.length ? intelligence.profile.reduce((sum,p)=>sum+(p.adjusted_forecast_mw??p.raw_forecast_mw),0)/intelligence.profile.length : null)} <em>MW</em></strong></div><div><small>Actual wind · mean</small><strong>{fmt(report?.mean_actual_mw)} <em>MW</em></strong></div><div><small>Advance wind planning buffer</small><strong>{fmt(intelligence?.profile.some(p=>p.p10_actual_mw!=null)? intelligence.profile.reduce((sum,p)=>sum+(p.p10_actual_mw==null?0:Math.max((p.adjusted_forecast_mw??p.raw_forecast_mw)-p.p10_actual_mw,0)*p.interval_minutes/60),0):null)} <em>MWh</em></strong></div></div><div className="kpi-grid"><Kpi label="Elexon forecast MAE" value={fmt(report?.mae_mw)} unit="MW" note="Average deviation from actuals" icon={Gauge}/><Kpi label="Root mean square error" value={fmt(report?.rmse_mw)} unit="MW" note="Penalises larger misses" icon={Activity} tone="blue"/><Kpi label="Forecast bias" value={signed(report?.bias_mw)} unit="MW" note="Negative = wind under-delivery" icon={GitCompareArrows} tone="purple"/><Kpi label="Valid interval coverage" value={fmt(report?.coverage_pct,1)} unit={report?.count ? '%' : ''} note={`${fmt(report?.count)} / ${fmt(report?.expected)} delivery intervals`} icon={ShieldCheck} tone="orange"/></div>
         <div className="main-chart-grid"><PowerChart points={day?.forecast_profile ?? []} intelligence={intelligence} loading={loading} matched={day?.points.length ?? 0}/><Exposure comparison={day}/></div>
         <div className="intel-teaser panel"><div><div className="section-kicker">NEW · INTELLIGENCE LAYER</div><h2>From forecast errors to decision evidence</h2><p>Scenario bands, downside flags, and gated historical bias correction — with a chronological backtest.</p></div><button className="primary-intel-button" onClick={() => setTab('intelligence')}>Explore intelligence <ArrowRight size={16}/></button></div>

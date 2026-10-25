@@ -109,6 +109,12 @@ def prepare_history(start: date, end: date, force: bool = False):
     return {'started': started, **service.status()}
 
 
+@app.get('/api/analysis/month')
+def analysis_month(day: date, hour: int = Query(9, ge=0, le=23), minute: int = Query(50, ge=0, le=59)):
+    valid_history_day(day)
+    return service.calendar_month(day, hour, minute)
+
+
 @app.get('/api/analysis/recent')
 def analysis_recent(day: date, hour: int = Query(9, ge=0, le=23), minute: int = Query(50, ge=0, le=59)):
     valid_history_day(day)

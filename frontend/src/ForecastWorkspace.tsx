@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, ArrowRight, CalendarDays, CheckCircle2, Clock3, Database, Eye, RefreshCw, ShieldAlert } from 'lucide-react';
 import { Area, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { getLiveForecast, getReplayForecast, prepareForecast, saveLiveSnapshot, getSavedPredictions, getSavedPrediction, refreshSnapshotActuals, getStatus } from './api';
+import { clearDataCache, getLiveForecast, getReplayForecast, prepareForecast, saveLiveSnapshot, getSavedPredictions, getSavedPrediction, refreshSnapshotActuals, getStatus } from './api';
 import { CHART_COLORS, formatMwTick, formatUkAxisTick, formatUkDate, formatUkDateTime, tooltipBoxStyle } from './chartTheme';
 import type { Intelligence, IntelligencePoint, PredictionDetails, PredictionItem, Status } from './types';
 
@@ -39,9 +39,11 @@ function ComparisonChart({ rows, title }: {rows: IntelligencePoint[]; title:stri
     <p className="ws-footnote">The scenario lines are empirical error-percentile outcomes, not calibrated guarantees. Missing actuals are left blank, never represented as zero.</p></section>;
 }
 
-export default function ForecastWorkspace({mode}:{mode:Mode}) {
-  const [date,setDate] = useState('2026-01-15');
-  const [decisionTime,setDecisionTime] = useState('09:50');
+export default function ForecastWorkspace({mode,date,decisionTime,onDateChange,onDecisionTimeChange,onDataImported}:{
+  mode:Mode; date:string; decisionTime:string;
+  onDateChange:(value:string)=>void; onDecisionTimeChange:(value:string)=>void;
+  onDataImported:()=>void;
+}) {
   const [report,setReport] = useState<(Intelligence & {gate_closed?:boolean; trading_note?:string})|null>(null);
   const [saved,setSaved] = useState<PredictionItem[]>([]);
   const [selected,setSelected] = useState<PredictionDetails|null>(null);
@@ -56,18 +58,21 @@ export default function ForecastWorkspace({mode}:{mode:Mode}) {
     const request = ++requestId.current;
     setErr('');
     try {
-      const [result,history,state] = await Promise.all([
-        mode==='replay' ? getReplayForecast(date,decisionTime) : getLiveForecast(),
-        getSavedPredictions(),getStatus(),
-      ]);
+      // Replay loads only its historical forecast. Saved predictions belong to Live.
+      if (mode === 'replay') {
+        const result = await getReplayForecast(date, decisionTime);
+        if (request!==requestId.current) return false;
+        setReport(result);
+        return true;
+      }
+      const [result,history,state] = await Promise.all([getLiveForecast(), getSavedPredictions(), getStatus()]);
       if (request!==requestId.current) return false;
       setReport(result);setSaved(history.items);setStatus(state);
-      if (selected) { const refreshed = await getSavedPrediction(selected.id); setSelected(refreshed); }
       return true;
     } catch(e) { if(request===requestId.current){setReport(null);setErr(e instanceof Error ? e.message : 'Unable to reach the prediction API');} return false; }
-  },[date,decisionTime,mode,selected?.id]);
+  },[date,decisionTime,mode]);
   useEffect(()=>{setSelected(null);setReport(null);void refresh();},[mode,date,decisionTime]);
-  useEffect(()=>{if(mode!=='live')return;void prepare();const id=window.setInterval(()=>void prepare(),30*60*1000);return()=>window.clearInterval(id);},[mode]);
+  // Do not start Elexon imports just by visiting Live; imports are user-initiated.
   useEffect(()=>{
     if (!status?.syncing) return;
     const id=window.setInterval(()=>{
@@ -75,17 +80,20 @@ export default function ForecastWorkspace({mode}:{mode:Mode}) {
         setStatus(s);
         if (!s.syncing) {
           setMessage(s.errors.length?`${s.errors.length} Elexon requests failed. Review errors and retry.`:'Data import complete. Recalculating with new snapshots.');
+          clearDataCache('main');
+          onDataImported();
           void refresh();
         }
       }).catch(()=>{});
     },2200);
     return()=>clearInterval(id);
-  },[status?.syncing,refresh]);
+  },[status?.syncing,refresh,onDataImported]);
 
   async function manualRecalculate() {
     if (recalculating) return;
     setRecalculating(true);setErr('');setMessage('Recalculating from locally available Elexon snapshots…');
     try {
+      clearDataCache('main');
       const success=await refresh();
       if (success) setMessage('Calculation refreshed. Forecasts only change when Elexon source data or selected cutoff changes; use Fetch required data to update snapshots.');
       else setMessage('');
@@ -124,8 +132,8 @@ export default function ForecastWorkspace({mode}:{mode:Mode}) {
   return <div className="ws-workspace">
     <div className="ws-hero"><div><div className="ws-hero-tag"><span/> {mode==='replay'?'AS-OF HISTORICAL REPLAY':'LIVE NEXT-DAY OUTLOOK'}</div><h2>{mode==='replay'?'Rewind a decision. See what the engine knew.':'Tomorrow’s wind. Today’s decision.'}</h2><p>{mode==='replay'?'Select a previous UK decision date. Predictions use only forecast publications available at its cutoff; actual generation is revealed afterwards for scoring.':'Issue an immutable forecast using currently published Elexon revisions and earlier observed history. Check the outcome once settlement actuals are available.'}</p></div><div className="ws-hero-icon">{mode==='replay'?<CalendarDays size={34}/>:<ShieldAlert size={34}/>}</div></div>
     <section className="panel ws-controls"><div className="ws-control-head"><div><strong>{mode==='replay'?'Historical decision date':'Current decision context'}</strong><p>{mode==='replay'?'Reconstruct any past date supported by Elexon source history':'Using the present UK date and clock; never future publications'}</p></div>{status?.syncing && <span className="ws-sync-label"><RefreshCw size={13} className="spin"/> Importing {status.sync_done}/{status.sync_total}</span>}</div><div className="ws-controls-grid">
-      <label>Decision date{mode==='replay'?<input type="date" value={date} min="2020-01-01" max={yesterday()} onChange={e=>setDate(e.target.value)}/>:<div className="ws-fixed">{chosenDay} · UK</div>}</label>
-      <label>Decision cutoff{mode==='replay'?<select value={decisionTime} onChange={e=>setDecisionTime(e.target.value)}><option value="08:30">08:30 UK</option><option value="09:20">09:20 UK</option><option value="09:50">09:50 UK · gate</option><option value="10:50">10:50 UK</option><option value="12:00">12:00 UK</option><option value="16:00">16:00 UK</option></select>:<div className="ws-fixed">Latest as of now</div>}</label>
+      <label>Decision date{mode==='replay'?<input type="date" value={date} min="2020-01-01" max={yesterday()} onChange={e=>onDateChange(e.target.value)}/>:<div className="ws-fixed">{chosenDay} · UK</div>}</label>
+      <label>Decision cutoff{mode==='replay'?<select value={decisionTime} onChange={e=>onDecisionTimeChange(e.target.value)}><option value="08:30">08:30 UK</option><option value="09:20">09:20 UK</option><option value="09:50">09:50 UK · gate</option><option value="10:50">10:50 UK</option><option value="12:00">12:00 UK</option><option value="16:00">16:00 UK</option></select>:<div className="ws-fixed">Latest as of now</div>}</label>
       <label>Target delivery<div className="ws-fixed">{deliveryDate}</div></label>
       <button className="ws-outline" disabled={busy||!!status?.syncing} onClick={()=>void prepare()}><Database size={16}/> Fetch required data</button>
       <button className="ws-dark" disabled={busy||recalculating||!!status?.syncing} onClick={()=>void manualRecalculate()}><RefreshCw size={16} className={recalculating?'spin':''}/> {recalculating?'Calculating…':'Recalculate'}</button>

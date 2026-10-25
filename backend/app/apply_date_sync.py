@@ -24,6 +24,21 @@ def edit(relative, transforms):
         print('Updated',relative)
     else: print('No changes needed', relative)
 
+# Handle checkouts where the earlier shared-date patch has already run.
+# Re-running the older edits would duplicate the new monthly endpoint, so skip
+# straight to the single remaining persistence fix.
+if 'const historicalCache = new Map' in (root/'frontend/src/api.ts').read_text(encoding='utf-8'):
+    app_text = (root/'frontend/src/App.tsx').read_text(encoding='utf-8')
+    if '<ForecastWorkspace mode="replay"' in app_text:
+        print('Replay persistence fix already applied. No changes needed.')
+    else:
+        edit('frontend/src/App.tsx', [(
+            "{tab === 'replay' || tab === 'live' ? <ForecastWorkspace mode={tab} date={date} decisionTime={time} onDateChange={setDate} onDecisionTimeChange={setTime} onDataImported={onForecastImported}/> : tab === 'history' ? null : tab === 'methodology' ? <Methodology/> :",
+            "<div style={{display:tab === 'replay' ? 'block' : 'none'}}>\n        <ForecastWorkspace mode=\"replay\" date={date} decisionTime={time} onDateChange={setDate} onDecisionTimeChange={setTime} onDataImported={onForecastImported}/>\n      </div>\n      {tab === 'live' ? <ForecastWorkspace mode=\"live\" date={date} decisionTime={time} onDateChange={setDate} onDecisionTimeChange={setTime} onDataImported={onForecastImported}/> : tab === 'replay' || tab === 'history' ? null : tab === 'methodology' ? <Methodology/> :"
+        )])
+    print('Existing shared-date patch retained; backend files not duplicated.')
+    sys.exit(0)
+
 edit('frontend/src/api.ts', [
  ("const API_ORIGIN = (import.meta.env.VITE_API_BASE_URL || '').replace(/\\/+$/, '');", """const API_ORIGIN = (import.meta.env.VITE_API_BASE_URL || '').replace(/\\/+$/, '');
 
@@ -206,4 +221,12 @@ def analysis_month(day: date, hour: int = Query(9, ge=0, le=23), minute: int = Q
 @app.get('/api/analysis/recent')"""),
 ])
 
-print('\nDone. Commit updated files and deploy backend + frontend together.')
+print('Shared-date base changes applied. Preserving replay on tab navigation...')
+
+# Keep historical replay mounted while visiting other tabs.
+# Without this the page remounts and clears its report, producing blank charts
+# and unnecessary GET requests on navigation. Live remains separate.
+edit('frontend/src/App.tsx', [
+    ("{tab === 'replay' || tab === 'live' ? <ForecastWorkspace mode={tab} date={date} decisionTime={time} onDateChange={setDate} onDecisionTimeChange={setTime} onDataImported={onForecastImported}/> : tab === 'history' ? null : tab === 'methodology' ? <Methodology/> :", '<div style={{display:tab === \'replay\' ? \'block\' : \'none\'}}>\n        <ForecastWorkspace mode="replay" date={date} decisionTime={time} onDateChange={setDate} onDecisionTimeChange={setTime} onDataImported={onForecastImported}/>\n      </div>\n      {tab === \'live\' ? <ForecastWorkspace mode="live" date={date} decisionTime={time} onDateChange={setDate} onDecisionTimeChange={setTime} onDataImported={onForecastImported}/> : tab === \'replay\' || tab === \'history\' ? null : tab === \'methodology\' ? <Methodology/> :')
+])
+print('Replay view will now remain mounted when switching tabs.')
