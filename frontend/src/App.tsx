@@ -19,7 +19,6 @@ const fmt = (number: number | null | undefined, digits = 0) => number == null ? 
 const timeStamp = (value: string) => formatUkDateTime(value);
 const timeOfDay = (value: string) => formatUkTime(value);
 const signed = (value: number | null | undefined) => value == null ? '—' : `${value > 0 ? '+' : ''}${fmt(value)}`;
-const ukYesterday = () => {const parts=new Intl.DateTimeFormat('en-GB',{year:'numeric',month:'2-digit',day:'2-digit',timeZone:'Europe/London'}).formatToParts(new Date());const get=(part:string)=>parts.find(x=>x.type===part)?.value??'01';const day=new Date(`${get('year')}-${get('month')}-${get('day')}T12:00:00Z`);day.setUTCDate(day.getUTCDate()-1);return day.toISOString().slice(0,10);};
 
 type Tab = 'replay' | 'live' | 'history' | 'overview' | 'intelligence' | 'records' | 'methodology';
 
